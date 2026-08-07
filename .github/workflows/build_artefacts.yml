@@ -1,0 +1,18 @@
+name: Build Artefacts
+on:
+  workflow_call:
+    outputs:
+      data-transformation-image-tag:
+        value: ${{ jobs.data-transformation-build.outputs.image-tag }}
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  data-transformation-build:
+    uses: ITV/itv-data-actions/.github/workflows/dp_build_and_push_img.yml@main
+    with:
+      data-product-name: test-atomicat
+      environment: dev
+      domain: commercial

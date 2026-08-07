@@ -1,0 +1,29 @@
+# test-atomicat: Orchestration (Airflow DAGs)
+
+The below Airflow DAGs are used to handle the orchestration:
+
+1. `test_atomicat_dag`: Orchestrates the data transformation process
+
+## DAG: `test_atomicat_dag`
+
+### Description
+
+This DAG handles the main data transformation pipeline. It uses Spark to write a Delta Lake table into a storage bucket.
+
+### Parameters
+
+- `project-id`: GCP project ID
+- `region`: GCP region
+- `env`: Environment (dev/pre/prd)
+- `data-product-bucket-path`: Path to the cloud storage bucket
+
+### Workflow
+
+1. **Ingest Task**: Submit a Serverless batch to Dataproc to execute the data transformation pipeline. This includes:
+   - Creating a new Spark cluster with specified configurations
+   - Pulling the Docker image from Artifact Registry containing data transformation code and dependencies
+   - Running the `main` entry point with the provided parameters
+
+### Backfilling
+
+There is no backfilling for these DAGs, as all data is fully refreshed on each run.

@@ -1,0 +1,118 @@
+name: Test & Checks
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  file-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      any: ${{ steps.changes.outputs.any }}
+      infra: ${{ steps.changes.outputs.infra }}
+      orchestration: ${{ steps.changes.outputs.orchestration }}
+      data-transformation: ${{ steps.changes.outputs.data-transformation }}
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+      - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+        id: changes
+        with:
+          filters: |
+            any:
+              - "**"
+            infra:
+              - config/**
+              - infrastructure/**
+            orchestration:
+              - orchestration/**
+            data-transformation:
+              - data-transformation/**
+
+  pre-commit-checks:
+    needs:
+      - file-changes
+    if: ${{ needs.file-changes.outputs.any == 'true' }}
+    uses: ITV/itv-data-actions/.github/workflows/dp_pre_commit.yml@main
+    with:
+      additional-dependencies: terraform@1.14.0 terragrunt@0.83.0 tflint@0.60.0
+    permissions:
+      id-token: write
+      contents: read
+
+  infra-checks:
+    needs:
+      - file-changes
+    if: ${{ needs.file-changes.outputs.infra == 'true' }}
+    uses: ITV/itv-data-actions/.github/workflows/dp_infra_terragrunt_plan_all_envs.yml@main
+    permissions:
+      id-token: write
+      issues: write
+      pull-requests: write
+      actions: read
+      contents: read
+    secrets:
+      git-auth-pat: ${{ secrets.INTERNAL_REPO_RO_PAT }}
+    with:
+      data-product-name: test-atomicat
+      domain: commercial
+      unit: core
+      pr-comment: false
+
+  orchestration-validation:
+    needs:
+      - file-changes
+    if: ${{ needs.file-changes.outputs.orchestration == 'true' }}
+    uses: ITV/itv-data-actions/.github/workflows/dp_orchestration_test.yml@main
+    secrets:
+      internal_repo_ro_pat: ${{ secrets.INTERNAL_REPO_RO_PAT }}
+    with:
+      environment: dev
+      data-product-name: test-atomicat
+      domain: commercial
+      run-flake8: false
+    permissions:
+      id-token: write
+      contents: read
+      pull-requests: write
+
+  data-transformation-validation:
+    needs:
+      - file-changes
+    if: ${{ needs.file-changes.outputs.data-transformation == 'true' }}
+    uses: ITV/itv-data-actions/.github/workflows/dp_data_transformation_py_test.yml@main
+    with:
+      environment: dev
+      data-product-name: test-atomicat
+      domain: commercial
+      run-flake8: false
+    secrets: inherit #pragma: allowlist secret
+    permissions:
+      id-token: write
+      contents: read
+
+  # This should be the only required PR check
+  check-completion:
+    needs:
+      - pre-commit-checks
+      - infra-checks
+      - orchestration-validation
+      - data-transformation-validation
+    if: |
+      always()
+      && (needs.pre-commit-checks.result == 'success' || needs.pre-commit-checks.result == 'skipped')
+      && (needs.infra-checks.result == 'success' || needs.infra-checks.result == 'skipped')
+      && (needs.orchestration-validation.result == 'success' || needs.orchestration-validation.result == 'skipped')
+      && (needs.data-transformation-validation.result == 'success' || needs.data-transformation-validation.result == 'skipped')
+    runs-on: ubuntu-latest
+    steps:
+       - id: check-completion
+         run: |
+           echo "All checks successful"
