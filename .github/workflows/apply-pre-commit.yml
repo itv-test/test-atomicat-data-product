@@ -1,0 +1,131 @@
+name: Update pre-commit Configuration
+
+on:
+  workflow_dispatch:
+    inputs:
+      github-org:
+        description: Optional, GitHub organization to filter repositories by
+        required: false
+        default: ITV
+        type: choice
+        options:
+          - ITV
+          - itv-test
+      repositories:
+        description: Optional, comma-separated list of repositories to process. If not provided, all repositories with the specified topic will be processed
+        required: false
+        default: ""
+        type: string
+      repository-topic:
+        description: Optional, topic to filter repositories by. Repositories will take precedence if provided
+        required: false
+        default: Specific repositories
+        type: choice
+        options:
+          - cortex-central-data-product
+          - cortex-external-data-product
+          - Specific repositories
+      path-to-config-template:
+        description: Optional, oath to the pre-commit config template
+        required: false
+        default: template/.pre-commit-config.yaml.jinja
+        type: string
+      path-to-test-workflow-template:
+        description: Optional, path to the test workflow template
+        required: false
+        default: template/.github/workflows/test.yml.jinja
+        type: string
+      target-branch-name:
+        description: Optional, name of the branch to create for the changes
+        required: false
+        default: cde-000-update-pre-commit-config
+        type: string
+      commit-and-pr-prefix:
+        description: Optional, prefix to use for commit messages and pull request titles
+        required: false
+        default: CDE-000 | XX
+        type: string
+      push-and-create-pull-requests:
+        description: Optional, whether to push the changes and create pull requests
+        required: false
+        default: false
+        type: boolean
+      mise-version:
+        description: Optional, version of mise to use
+        required: false
+        default: 2025.11.7
+        type: string
+      pre-commit-version:
+        description: Optional, version of pre-commit to use
+        required: false
+        default: 4.5.0
+        type: string
+      additional-dependencies:
+        description: Optional, space-separated list of additional dependencies to install with optional version number (e.g. "terraform@1.11.4 tflint")
+        required: false
+        # The below should align to those used in 'template/.github/workflows/test.yml.jinja'
+        default: terraform@1.14.0 terragrunt@0.83.0 tflint@0.60.0 sbt@1.11.7
+        type: string
+
+run-name: |
+  ${{ inputs.repositories != '' 
+  && format('Update pre-commit Configuration for repositories: {0}', inputs.repositories) 
+  || format('Update pre-commit Configuration for repository topic: {0}', inputs.repository-topic) }}
+
+concurrency:
+  group: apply-pre-commit
+  cancel-in-progress: false
+
+jobs:
+  update-pre-commit-configuration:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Install Python
+        uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install Python dependencies
+        run: |
+          cd .github/workflows/apply-pre-commit
+          pip install poetry
+          poetry install --only main
+
+      - name: Install mise and dependencies
+        uses: jdx/mise-action@146a28175021df8ca24f8ee1828cc2a60f980bd5 # v3.5.1
+        with:
+          version: ${{ inputs.mise-version }}
+          install: true
+          install_args: pre-commit@${{inputs.pre-commit-version}} ${{ inputs.additional-dependencies }}
+
+      - name: Configure git
+        run: |
+          gh auth login --with-token <<< "${{ secrets.GH_BOT_TOKEN }}"
+          git config --global user.name "itv-cortex-bot"
+          git config --global user.email "cortex-github-bot-group@itv.com"
+          git config --global gpg.format ssh
+          mkdir -p ~/.ssh
+          echo "${{ secrets.GH_BOT_SIGN_KEY }}" >> ~/.ssh/gh_signing_key
+          chmod 600 ~/.ssh/gh_signing_key
+          git config --global user.signingKey ~/.ssh/gh_signing_key
+          git config --global commit.gpgsign true
+
+      - name: Update test workflow, pre-commit config, run pre-commit and, optionally, create pull requests
+        env:
+          GH_TOKEN: ${{ secrets.GH_BOT_TOKEN }}
+        run: |
+          cd .github/workflows/apply-pre-commit
+          mise use -g pre-commit@${{inputs.pre-commit-version}} ${{ inputs.additional-dependencies }}
+          poetry run python src/apply_pre_commit/main.py \
+            --github-org "${{ inputs.github-org }}" \
+            --repositories "${{ inputs.repositories }}" \
+            --repository-topic "${{ inputs.repository-topic }}" \
+            --path-to-config-template "${{ inputs.path-to-config-template }}" \
+            --path-to-test-workflow-template "${{ inputs.path-to-test-workflow-template }}" \
+            --target-branch-name "${{ inputs.target-branch-name }}" \
+            --commit-and-pr-prefix "${{ inputs.commit-and-pr-prefix }}" \
+            ${{ inputs.push-and-create-pull-requests && '--push-and-create-pull-requests' || '' }} 

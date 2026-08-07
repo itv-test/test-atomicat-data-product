@@ -1,0 +1,11 @@
+access_control:
+  repo: itv-test/test-actions
+  path: ""
+bucket:
+  mock: true
+managed_folder:
+  mock: true
+dataset:
+  mock: true
+analytics_hub_listing:
+  mock: true

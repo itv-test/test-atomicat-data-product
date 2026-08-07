@@ -1,0 +1,6 @@
+--constraint https://raw.githubusercontent.com/apache/airflow/constraints-2.10.2/constraints-3.11.txt
+apache-airflow==2.11.0
+itv-data-airflow-slack==1.0.0
+itv-data-airflow-dataproc==1.0.8
+pytest==8.3.3
+pytest-mock==3.14.0

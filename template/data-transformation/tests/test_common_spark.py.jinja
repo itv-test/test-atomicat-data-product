@@ -1,0 +1,23 @@
+from pyspark.sql import SparkSession
+
+from {{ data_product_name_snake_case }}.common.spark import create_spark_session
+
+
+def test_create_spark_session():
+    # When: a Spark session is created
+    spark = create_spark_session()
+
+    # Then: it has the correct type and configuration
+    assert isinstance(spark, SparkSession)
+    assert (
+        spark.conf.get("spark.sql.extensions")
+        == "io.delta.sql.DeltaSparkSessionExtension"
+    )
+    assert (
+        spark.conf.get("spark.sql.catalog.spark_catalog")
+        == "org.apache.spark.sql.delta.catalog.DeltaCatalog"
+    )
+    assert spark.sparkContext.appName == "Example Spark App"
+
+    # Cleanup
+    spark.stop()

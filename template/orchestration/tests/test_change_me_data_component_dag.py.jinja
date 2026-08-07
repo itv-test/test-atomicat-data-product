@@ -1,0 +1,28 @@
+from airflow.models.dag import DAG
+
+
+def test_ingest_task_exists(dag: DAG):
+    assert dag.get_task("ingest_task") is not None
+
+
+def test_dag_schedule(dag: DAG):
+    assert dag.schedule_interval is None
+
+
+def test_dag_tags(dag: DAG):
+    assert "data-product:{{ data_product_name_kebab_case }}" in dag.tags
+    assert "domain:{{ domain }}" in dag.tags
+
+
+def test_dag_catchup_disabled(dag: DAG):
+    assert dag.catchup is False
+
+
+def test_ingest_task_has_required_runtime_args(dag: DAG):
+    ingest_task = dag.get_task("ingest_task")
+    runtime_args = ingest_task.batch["pyspark_batch"]["args"]
+
+    assert "--project-id" in runtime_args
+    assert "--region" in runtime_args
+    assert "--env" in runtime_args
+    assert "--data-product-bucket-path" in runtime_args

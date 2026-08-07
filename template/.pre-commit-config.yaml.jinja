@@ -1,0 +1,59 @@
+repos:
+  # IaC formatting, linting and validation
+  # Requries: terraform, tflint and terragrunt to be installed and available in PATH
+  - repo: https://github.com/antonbabenko/pre-commit-terraform
+    rev: v1.104.0
+    hooks:
+      - id: terraform_fmt
+      - id: terraform_tflint
+        args:
+          - --args=--fix
+          - --args=--disable-rule=terraform_required_version
+  - repo: https://github.com/gruntwork-io/pre-commit
+    rev: v0.1.30
+    hooks:
+      - id: terragrunt-hclfmt
+  # Python formatting and linting
+  - repo: https://github.com/pycqa/flake8
+    rev: 6.1.0
+    hooks:
+      - id: flake8
+        name: flake8 (excluding tests)
+        files: "^(?!.*\/tests\/).*"
+        args: [--max-line-length=99]
+      - id: flake8
+        name: flake8 (tests)
+        files: "^.*\/tests\/.*$"
+        args: [--max-line-length=120]
+  - repo: https://github.com/pycqa/isort
+    rev: 5.12.0
+    hooks:
+      - id: isort
+        args: ["--profile", "black", "--filter-files"]
+        stages: [pre-commit]
+{%- if language == "scala" %}  
+  # Scala formatting and linting
+  - repo: https://github.com/softwaremill/scala-pre-commit-hooks
+    rev: v0.5.1
+    hooks:
+      - id: sbt-scalafmt
+        args: ["--project-dir", "./data-transformation"]
+      - id: sbt-scalafmt-apply
+        args: ["--project-dir", "./data-transformation"]
+{%- endif %}
+  # General purpose hooks
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.21.1
+    hooks:
+      - id: gitleaks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-case-conflict
+      - id: check-builtin-literals
+      - id: check-yaml
+      - id: debug-statements
+      - id: detect-private-key
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+      - id: trailing-whitespace

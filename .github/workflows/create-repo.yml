@@ -1,0 +1,166 @@
+name: Create & Configure Repo
+on:
+  workflow_dispatch:
+    inputs:
+      name:
+        description: 'Data Product Name (excluding "-data-product" suffix)'
+        required: true
+        type: string
+      platform:
+        description: "Platform"
+        required: true
+        type: choice
+        options:
+          - cortex
+          - bartex
+      domain:
+        description: "Domain"
+        default:
+        required: true
+        type: choice
+        options:
+          - "commercial"
+          - "content"
+          - "marketing"
+          - "operational"
+          - "publication"
+          - "viewer"
+          - "crash"
+      data_product_owner:
+        description: "Data Product Owner"
+        default: "person@itv.com"
+        required: true
+        type: string
+      technical_owner:
+        description: "Technical Owner"
+        default: "team@itv.com"
+        required: true
+        type: string
+      data_custodian:
+        description: "Data Custodian"
+        default: "person@itv.com"
+        required: true
+        type: string
+      github_team:
+        description: "GitHub Team"
+        default: ""
+        required: true
+        type: choice
+        options:
+          - "cde"
+          - "central-data-platform"
+          - "data-mesh-platform"
+
+run-name: "Creating: ${{ inputs.name }} | Started by: ${{ github.actor }}"
+
+env:
+  REPO_NAME: ${{ inputs.name }}-data-product
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Validate input form
+        env:
+          GHA_DOMAIN: ${{ inputs.domain }}
+          GHA_PRODUCT_NAME: ${{ inputs.name }}
+          GHA_PLATFORM: ${{ inputs.platform }}
+        run: |
+          echo "Validating user workflow input"
+          python3 validator.py
+
+  create-repo:
+    needs: validate
+    uses: itv-test/test-actions/.github/workflows/create-repo.yml@v1.28.0
+    with:
+      name: ${{ inputs.name }}-data-product
+      description: "GCP Data Product: ${{ inputs.name }}"
+      business-area: cortex
+      template: ${{ github.repository }}
+      identity-path: chainguard/configure-repo.sts.yaml
+
+  configure:
+    needs: create-repo
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # to obtain OIDC token for Octo STS exchange
+    steps:
+      - name: Get GitHub token via Octo STS
+        id: octo-sts
+        uses: itv-test/test-actions/octo-sts@main
+        with:
+          scope: ${{ github.repository_owner }}/${{ inputs.name }}-data-product
+          identity: configure-repo
+
+      - name: Checkout new repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ${{ github.repository_owner }}/${{ inputs.name }}-data-product
+          token: ${{ steps.octo-sts.outputs.token }}
+
+      - name: Initialise new repo
+        env:
+          GHA_VERSION: "5.5.0"
+          GHA_PRODUCT_NAME: ${{ inputs.name }}
+          GHA_DOMAIN: ${{ inputs.domain }}
+          GHA_PLATFORM: ${{ inputs.platform }}
+          GHA_DATA_PRODUCT_OWNER: ${{ inputs.data_product_owner }}
+          GHA_TECHNICAL_OWNER: ${{ inputs.technical_owner }}
+          GHA_DATA_CUSTODIAN: ${{ inputs.data_custodian }}
+          GHA_GH_TEAM: ${{ inputs.github_team }}
+          GHA_REPO_PATH: ${{ github.workspace }}
+        run: |
+          pip3 install -r requirements.txt
+          python3 initialise.py
+
+      - name: Get GitHub token via Octo STS for fetching modules
+        id: octo-sts-module-contents
+        uses: itv-test/test-actions/octo-sts@main
+        with:
+          identity: module-contents
+
+      - name: Configure repository files
+        env:
+          GH_TOKEN: ${{ steps.octo-sts-module-contents.outputs.token }}
+          GHA_DOMAIN: ${{ inputs.domain }}
+          GHA_REPO_PATH: ${{ github.workspace }}
+        run: |
+          python3 module_versions.py
+          for file in $(find orchestration -name '*_dag.py'); do
+            black $file
+          done
+          python3 fetch_readme_examples.py
+
+      - name: Remove scaffolding files
+        run: |
+          mv apply_repo_settings.py /tmp/apply_repo_settings.py
+          rm -f fetch_readme_examples.py \
+                initialise.py main.core.tf.j2 main.data_access.tf.j2 \
+                module_versions.py modules.yaml requirements.txt \
+                validator.py
+          rm -rf chainguard template .github/chainguard
+
+      - name: Commit configured files
+        uses: itv-test/test-actions/bot-commit@main
+        with:
+          repository: ${{ github.repository_owner }}/${{ inputs.name }}-data-product
+          token: ${{ steps.octo-sts.outputs.token }}
+          message: "chore(initial): configure data product from template"
+          ref: main
+          files: |
+            **
+
+      - name: Apply repo settings and security ruleset
+        env:
+          GH_TOKEN: ${{ steps.octo-sts.outputs.token }}
+          GH_REPO_NAME: ${{ inputs.name }}-data-product
+          GHA_PLATFORM: ${{ inputs.platform }}
+          GHA_DOMAIN: ${{ inputs.domain }}
+          GHA_GH_TEAM: ${{ inputs.github_team }}
+        run: |
+          python3 /tmp/apply_repo_settings.py

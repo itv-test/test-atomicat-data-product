@@ -1,0 +1,208 @@
+name: Test & Checks
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+{%- if domain != "crash" %}
+concurrency:
+  group: ${{ '{{' }} github.workflow {{ '}}' }}-${{ '{{' }} github.event.pull_request.number || github.ref {{ '}}' }}
+  cancel-in-progress: true
+
+jobs:
+  file-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      any: ${{ '{{' }} steps.changes.outputs.any {{ '}}' }}
+      infra: ${{ '{{' }} steps.changes.outputs.infra {{ '}}' }}
+      orchestration: ${{ '{{' }} steps.changes.outputs.orchestration {{ '}}' }}
+      data-transformation: ${{ '{{' }} steps.changes.outputs.data-transformation {{ '}}' }}
+{%- if has_machine_learning %}
+      machine-learning: ${{ '{{' }} steps.changes.outputs.machine-learning {{ '}}' }}
+{%- endif -%}
+{%- if has_flex %}
+      flex: ${{ '{{' }} steps.changes.outputs.flex {{ '}}' }}
+{%- endif %}
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+      - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+        id: changes
+        with:
+          filters: |
+            any:
+              - "**"
+            infra:
+              - config/**
+              - infrastructure/**
+            orchestration:
+              - orchestration/**
+            data-transformation:
+              - data-transformation/**
+{%- if has_machine_learning %}
+            machine-learning:
+              - machine-learning/**
+{%- endif -%}
+{%- if has_flex %}
+            flex:
+              - flex/**
+{%- endif %}
+
+  pre-commit-checks:
+    needs:
+      - file-changes
+    if: ${{ '{{' }} needs.file-changes.outputs.any == 'true' {{ '}}' }}
+    uses: ITV/itv-data-actions/.github/workflows/dp_pre_commit.yml@main
+    with:
+      additional-dependencies: terraform@1.14.0 terragrunt@0.83.0 tflint@0.60.0{% if language == "scala" %} sbt@1.11.7{% endif %}
+    permissions:
+      id-token: write
+      contents: read
+
+  infra-checks:
+    needs:
+      - file-changes
+    if: ${{ '{{' }} needs.file-changes.outputs.infra == 'true' {{ '}}' }}
+    uses: ITV/itv-data-actions/.github/workflows/dp_infra_terragrunt_plan_all_envs.yml@main
+    permissions:
+      id-token: write
+      issues: write
+      pull-requests: write
+      actions: read
+      contents: read
+    secrets:
+      git-auth-pat: ${{ '{{' }} secrets.INTERNAL_REPO_RO_PAT {{ '}}' }}
+    with:
+      data-product-name: {{ data_product_name_kebab_case }}
+{%- if platform != "cortex" %}
+      platform: {{ platform }}
+{%- endif %}
+      domain: {{ domain }}{% if set_type_in_infra_checks %}
+      type: data_product{% endif %}
+      unit: core
+      pr-comment: false
+
+  orchestration-validation:
+    needs:
+      - file-changes
+    if: ${{ '{{' }} needs.file-changes.outputs.orchestration == 'true' {{ '}}' }}
+    uses: ITV/itv-data-actions/.github/workflows/dp_orchestration_test.yml@main
+    secrets:
+      internal_repo_ro_pat: ${{ '{{' }} secrets.INTERNAL_REPO_RO_PAT {{ '}}' }}
+    with:
+      environment: dev
+      data-product-name: {{ data_product_name_kebab_case }}
+{%- if platform != "cortex" %}
+      platform: {{ platform }}
+{%- endif %}
+      domain: {{ domain }}
+      run-flake8: false
+    permissions:
+      id-token: write
+      contents: read
+      pull-requests: write
+
+  data-transformation-validation:
+    needs:
+      - file-changes
+    if: ${{ '{{' }} needs.file-changes.outputs.data-transformation == 'true' {{ '}}' }}
+    uses: ITV/itv-data-actions/.github/workflows/dp_data_transformation_{% if language == "scala" %}scala{% else %}py{% endif %}_test.yml@main
+    with:
+      environment: dev
+      data-product-name: {{ data_product_name_kebab_case }}
+{%- if platform != "cortex" %}
+      platform: {{ platform }}
+{%- endif %}
+      domain: {{ domain }}
+      run-{% if language == "scala" %}scalafmt{% else %}flake8{% endif %}: false
+    secrets: inherit #pragma: allowlist secret
+    permissions:
+      id-token: write
+      contents: read
+
+{%- if has_machine_learning %}
+
+  machine-learning-validation:
+    needs:
+      - file-changes
+    if: ${{ '{{' }} needs.file-changes.outputs.machine-learning == 'true' {{ '}}' }}
+    uses: ITV/itv-data-actions/.github/workflows/dp_data_transformation_py_test.yml@main
+    with:
+      environment: dev
+      data-product-name: {{ data_product_name_kebab_case }}
+{%- if platform != "cortex" %}
+      platform: {{ platform }}
+{%- endif %}
+      domain: {{ domain }}
+      context-dir: machine-learning
+      run-flake8: false
+    permissions:
+      id-token: write
+      contents: read
+    secrets: inherit #pragma: allowlist secret
+{%- endif -%}
+
+{%- if has_flex %}
+
+  flex-validation:
+    needs:
+      - file-changes
+    if: ${{ '{{' }} needs.file-changes.outputs.flex == 'true' {{ '}}' }}
+    uses: ITV/itv-data-actions/.github/workflows/dp_flex_test.yml@main
+    secrets:
+      internal_repo_ro_pat: ${{ '{{' }} secrets.INTERNAL_REPO_RO_PAT {{ '}}' }}
+    with:
+      environment: dev
+      data-product-name: {{ data_product_name_kebab_case }}
+{%- if platform != "cortex" %}
+      platform: {{ platform }}
+{%- endif %}
+      domain: {{ domain }}
+      skip-coverage-checks: true
+    permissions:
+      id-token: write
+      contents: read
+{%- endif %}
+
+  # This should be the only required PR check
+  check-completion:
+    needs:
+      - pre-commit-checks
+      - infra-checks
+      - orchestration-validation
+      - data-transformation-validation
+      {%- if has_machine_learning %}
+      - machine-learning-validation
+      {%- endif -%}
+      {%- if has_flex %}
+      - flex-validation
+      {%- endif %}
+    if: |
+      always()
+      && (needs.pre-commit-checks.result == 'success' || needs.pre-commit-checks.result == 'skipped')
+      && (needs.infra-checks.result == 'success' || needs.infra-checks.result == 'skipped')
+      && (needs.orchestration-validation.result == 'success' || needs.orchestration-validation.result == 'skipped')
+      && (needs.data-transformation-validation.result == 'success' || needs.data-transformation-validation.result == 'skipped')
+      {%- if has_machine_learning %}
+      && (needs.machine-learning-validation.result == 'success' || needs.machine-learning-validation.result == 'skipped')
+      {%- endif -%}
+      {%- if has_flex %}
+      && (needs.flex-validation.result == 'success' || needs.flex-validation.result == 'skipped')
+      {%- endif %}
+    runs-on: ubuntu-latest
+    steps:
+       - id: check-completion
+         run: |
+           echo "All checks successful"
+  {%- endif %}
+{%- if domain == "crash" %}
+jobs: # top-level, required
+  check-completion: # job name
+      runs-on: ubuntu-latest
+      steps:
+          - name: Mark checks complete
+            run: echo "All checks successful"
+{%- endif %}

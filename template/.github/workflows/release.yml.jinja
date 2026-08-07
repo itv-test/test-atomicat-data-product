@@ -1,0 +1,64 @@
+name: Release
+on:
+  release:
+    types: [released]
+
+run-name: "Release (${{ '{{' }} github.ref_name {{ '}}' }})"
+
+concurrency:
+  group: ${{ '{{' }} github.workflow {{ '}}' }}
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  issues: write
+  actions: read
+  contents: read
+
+jobs:
+  tag-check:
+    uses: ITV/itv-data-actions/.github/workflows/dp_tag_check.yml@main
+    secrets: inherit
+
+  build-artefacts:
+    needs: tag-check
+    uses: ITV/{{ data_product_name_kebab_case }}-data-product/.github/workflows/build_artefacts.yml@main
+{% if platform != "cortex" %}
+  deployment-tst:
+    uses: ITV/{{ data_product_name_kebab_case }}-data-product/.github/workflows/deploy.yml@main
+    needs:
+      - build-artefacts
+    secrets: inherit
+    with:
+      environment: tst
+      data-transformation-image-tag: ${{ '{{' }} needs.build-artefacts.outputs.data-transformation-image-tag {{ '}}' }}
+{% else %}
+  deployment-dev:
+    uses: ITV/{{ data_product_name_kebab_case }}-data-product/.github/workflows/deploy.yml@main
+    needs:
+      - build-artefacts
+    secrets: inherit
+    with:
+      environment: dev
+      data-transformation-image-tag: ${{ '{{' }} needs.build-artefacts.outputs.data-transformation-image-tag {{ '}}' }}
+
+  deployment-pre:
+    uses: ITV/{{ data_product_name_kebab_case }}-data-product/.github/workflows/deploy.yml@main
+    secrets: inherit
+    needs:
+      - deployment-dev
+      - build-artefacts
+    with:
+      environment: pre
+      data-transformation-image-tag: ${{ '{{' }} needs.build-artefacts.outputs.data-transformation-image-tag {{ '}}' }}
+
+  deployment-prd:
+    needs:
+      - deployment-pre
+      - build-artefacts
+    secrets: inherit
+    uses: ITV/{{ data_product_name_kebab_case }}-data-product/.github/workflows/deploy.yml@main
+    with:
+      environment: prd
+      data-transformation-image-tag: ${{ '{{' }} needs.build-artefacts.outputs.data-transformation-image-tag {{ '}}' }}
+{%- endif %}
